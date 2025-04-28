@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, reactive } from "vue";
+import { ref, onMounted, reactive, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { openFileDialog } from "./fileDialog";
 import {
@@ -14,33 +14,139 @@ import {
   autoAddMcpReposFromFileContent
 } from "./mcpListManager";
 
+// Import shadcn UI components
+import UiButton from '@/components/ui/button.vue';
+import UiCard from '@/components/ui/card.vue';
+import UiSwitch from '@/components/ui/switch.vue';
+import UiTable from '@/components/ui/table.vue';
+
+// Lucide 아이콘 가져오기
+import { X, Plus, Save, Trash2, Edit, Power, Sun, Moon, FileText, Check } from 'lucide-vue-next';
+
 const fileContent = ref("");
 const lastFilePath = ref("");
 const errorMsg = ref("");
+const theme = ref(localStorage.getItem('theme') || 'system');
+
+// Handle theme changes
+function setTheme(newTheme) {
+  theme.value = newTheme;
+  localStorage.setItem('theme', newTheme);
+  
+  // Apply theme to document
+  const isDark = newTheme === 'dark' || (newTheme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.classList.toggle('dark', isDark);
+}
+
+// Watch for system theme changes when in system mode
+watch(theme, (newTheme) => {
+  setTheme(newTheme);
+});
+
+// Show form modal
+const showAddForm = ref(false);
+const showEditForm = ref(false);
 
 // MCP 저장소 관리
 const mcpList = ref(getMcpList());
-const newRepo = reactive({ id: "", command: "", args: "", active: true });
-const editingRepo = reactive({ id: "", command: "", args: "", active: true, isEditing: false });
+// 팝업 폼 표시 여부
+const showAddModal = ref(false);
+const showEditModal = ref(false);
+
+// 저장소 유형
+const REPO_TYPES = {
+  STDIO: 'stdio',
+  SSE: 'sse'
+};
+
+// 새 저장소 기본 상태
+const newRepo = reactive({ 
+  id: "", 
+  type: REPO_TYPES.STDIO,
+  command: "", 
+  args: "", 
+  url: "",
+  env: [],
+  active: true 
+});
+
+// 환경변수 관리를 위한 새 항목
+const newEnvVar = reactive({ key: "", value: "" });
+
+// 편집 중인 저장소 상태
+const editingRepo = reactive({ 
+  id: "", 
+  type: REPO_TYPES.STDIO,
+  command: "", 
+  args: "", 
+  url: "",
+  env: [],
+  active: true, 
+  isEditing: false 
+});
 
 async function refreshMcpList() {
   await saveMcpListToFile();
   mcpList.value = getMcpList(); // 저장 후에도 동기화!
 }
 
+// 환경변수 추가 함수
+function addEnvVar() {
+  if (!newEnvVar.key) return;
+  
+  if (newRepo.isEditing) {
+    editingRepo.env.push({...newEnvVar});
+  } else {
+    newRepo.env.push({...newEnvVar});
+  }
+  
+  // 항목 초기화
+  newEnvVar.key = "";
+  newEnvVar.value = "";
+}
+
+// 환경변수 삭제 함수
+function removeEnvVar(index, isEditing = false) {
+  if (isEditing) {
+    editingRepo.env.splice(index, 1);
+  } else {
+    newRepo.env.splice(index, 1);
+  }
+}
+
 async function addRepo() {
   try {
-    if (!newRepo.id || !newRepo.command) {
-      alert('ID와 Command는 필수 입력 항목입니다.');
+    if (!newRepo.id) {
+      alert('ID\ub294 \ud544\uc218 \uc785\ub825 \ud56d\ubaa9\uc785\ub2c8\ub2e4.');
       return;
     }
     
-    addMcpRepo({
+    if (newRepo.type === REPO_TYPES.STDIO && !newRepo.command) {
+      alert('stdio \ud0c0\uc785\uc740 Command\uac00 \ud544\uc218\uc785\ub2c8\ub2e4.');
+      return;
+    }
+    
+    if (newRepo.type === REPO_TYPES.SSE && !newRepo.url) {
+      alert('SSE \ud0c0\uc785\uc740 URL\uc774 \ud544\uc218\uc785\ub2c8\ub2e4.');
+      return;
+    }
+    
+    const repoData = {
       id: newRepo.id.trim(),
-      command: newRepo.command.trim(),
-      args: newRepo.args.split(",").map(s => s.trim()).filter(Boolean),
-      active: newRepo.active
-    });
+      type: newRepo.type,
+      active: newRepo.active,
+      env: [...newRepo.env]
+    };
+    
+    // 타입에 따라 필요한 필드 추가
+    if (newRepo.type === REPO_TYPES.STDIO) {
+      repoData.command = newRepo.command.trim();
+      repoData.args = newRepo.args.split(",").map(s => s.trim()).filter(Boolean);
+    } else if (newRepo.type === REPO_TYPES.SSE) {
+      repoData.url = newRepo.url.trim();
+    }
+    
+    addMcpRepo(repoData);
     
     // 즉시 JSON 파일에 저장
     await saveMcpListToFile();
@@ -53,10 +159,16 @@ async function addRepo() {
     }
     
     // 입력 폼 초기화
-    newRepo.id = ""; 
+    newRepo.id = "";
+    newRepo.type = REPO_TYPES.STDIO;
     newRepo.command = ""; 
     newRepo.args = ""; 
+    newRepo.url = "";
+    newRepo.env = [];
     newRepo.active = true;
+    
+    // 모달 닫기
+    showAddModal.value = false;
     
     // 성공 메시지
     alert('저장소가 성공적으로 추가되었습니다.');
@@ -107,15 +219,26 @@ async function updateLoadedFileWithActiveMcps() {
     
     // 활성화된 저장소들을 파일에 추가/업데이트
     activeMcps.forEach(repo => {
-      // active 속성은 제외하고 저장
-      const { active, ...repoWithoutActive } = {
-        id: repo.id,
-        command: repo.command,
-        args: repo.args,
-        active: repo.active
-      };
+      // 타입에 따라 필요한 속성을 포함한 객체 생성
+      let repoData = { id: repo.id };
       
-      fileJson.mcpServers[repo.id] = repoWithoutActive;
+      // 타입 정보 추가
+      repoData.type = repo.type || REPO_TYPES.STDIO;
+      
+      // 타입에 따라 필요한 필드 추가
+      if (repoData.type === REPO_TYPES.STDIO) {
+        repoData.command = repo.command;
+        repoData.args = repo.args;
+      } else if (repoData.type === REPO_TYPES.SSE) {
+        repoData.url = repo.url;
+      }
+      
+      // 환경 변수 추가 (있는 경우)
+      if (repo.env && repo.env.length > 0) {
+        repoData.env = repo.env;
+      }
+      
+      fileJson.mcpServers[repo.id] = repoData;
     });
     
     // 업데이트된 JSON 다시 문자열로 변환 (예쁘게 포맷팅)
@@ -176,24 +299,45 @@ async function toggleActive(id) {
 
 function startEditing(repo) {
   editingRepo.id = repo.id;
-  editingRepo.command = repo.command;
-  editingRepo.args = repo.args.join(',');
+  editingRepo.type = repo.type || REPO_TYPES.STDIO;
+  editingRepo.command = repo.command || "";
+  editingRepo.args = repo.args ? repo.args.join(',') : "";
+  editingRepo.url = repo.url || "";
+  editingRepo.env = repo.env ? [...repo.env] : [];
   editingRepo.active = repo.active;
   editingRepo.isEditing = true;
+  
+  // 편집 모달 열기
+  showEditModal.value = true;
 }
 
 async function saveEdit() {
   try {
-    if (!editingRepo.command) {
-      alert('Command는 필수 입력 항목입니다.');
+    if (editingRepo.type === REPO_TYPES.STDIO && !editingRepo.command) {
+      alert('stdio \ud0c0\uc785\uc740 Command\uac00 \ud544\uc218\uc785\ub2c8\ub2e4.');
       return;
     }
     
-    editMcpRepo(editingRepo.id, {
-      command: editingRepo.command.trim(),
-      args: editingRepo.args.split(",").map(s => s.trim()).filter(Boolean),
-      active: editingRepo.active
-    });
+    if (editingRepo.type === REPO_TYPES.SSE && !editingRepo.url) {
+      alert('SSE \ud0c0\uc785\uc740 URL\uc774 \ud544\uc218\uc785\ub2c8\ub2e4.');
+      return;
+    }
+    
+    const repoData = {
+      type: editingRepo.type,
+      active: editingRepo.active,
+      env: [...editingRepo.env]
+    };
+    
+    // 타입에 따라 필요한 필드 추가
+    if (editingRepo.type === REPO_TYPES.STDIO) {
+      repoData.command = editingRepo.command.trim();
+      repoData.args = editingRepo.args.split(",").map(s => s.trim()).filter(Boolean);
+    } else if (editingRepo.type === REPO_TYPES.SSE) {
+      repoData.url = editingRepo.url.trim();
+    }
+    
+    editMcpRepo(editingRepo.id, repoData);
     
     // 즉시 JSON 파일에 저장
     await saveMcpListToFile();
@@ -215,10 +359,16 @@ async function saveEdit() {
 
 function cancelEdit() {
   editingRepo.id = "";
+  editingRepo.type = REPO_TYPES.STDIO;
   editingRepo.command = "";
   editingRepo.args = "";
+  editingRepo.url = "";
+  editingRepo.env = [];
   editingRepo.active = true;
   editingRepo.isEditing = false;
+  
+  // 편집 모달 닫기
+  showEditModal.value = false;
 }
 
 // 앱 초기화 시 MCP 목록 로드
@@ -278,138 +428,351 @@ async function resetFile() {
 
 onMounted(() => {
   loadLastFile();
+  
+  // Initialize theme based on saved preference or system preference
+  setTheme(theme.value);
+  
+  // Add listener for system theme changes
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (theme.value === 'system') {
+      setTheme('system');
+    }
+  });
 });
 </script>
 
 <template>
-  <main class="min-h-screen bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
+  <main class="min-h-screen py-8 px-4 sm:px-6 lg:px-8">
     <div class="max-w-5xl mx-auto">
-      <h1 class="text-3xl font-bold text-center text-gray-800 mb-8 p-4">MCP-Server 관리</h1>
-      
-      <div class="flex justify-center space-x-4 mb-6">
-        <button @click="selectFile" class="px-5 py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 font-medium transition-colors duration-200 shadow-sm">
-          <span class="flex items-center gap-2"><span>📂</span> 파일 선택</span>
-        </button>
-        <button @click="resetFile" class="px-5 py-2.5 bg-gray-600 text-white rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 font-medium transition-colors duration-200 shadow-sm">
-          <span class="flex items-center gap-2"><span>🔄</span> 기록 초기화</span>
-        </button>
+      <div class="flex justify-between items-center mb-8">
+        <h1 class="text-3xl font-bold p-4">MCP-Server 관리</h1>
+        <div class="flex items-center gap-2">
+          <UiButton @click="theme === 'light' ? setTheme('dark') : setTheme('light')" variant="ghost" size="icon" :class="{ 'bg-accent': theme === 'light' }">
+            <Sun v-if="theme === 'light'" class="h-5 w-5" />
+            <Moon v-else class="h-5 w-5" />
+          </UiButton>
+        </div>
       </div>
       
-      <div v-if="lastFilePath" class="bg-blue-50 p-4 rounded-md mb-6 shadow-sm border border-blue-100">
-        <p class="text-sm text-blue-800"><span class="font-medium">불러온 파일 경로:</span> {{ lastFilePath }}</p>
+      <div class="flex justify-end space-x-4 mb-6">
+        <UiButton @click="selectFile" variant="default" class="gap-2">
+          <FileText class="h-4 w-4" />
+          파일 선택
+        </UiButton>
+        <!-- <UiButton @click="resetFile" variant="destructive" class="gap-2">
+          <Trash2 class="h-4 w-4" />
+          초기화
+        </UiButton> -->
       </div>
       
-      <div v-if="errorMsg" class="bg-red-50 p-4 rounded-md mb-6 text-red-700 shadow-sm border border-red-100">{{ errorMsg }}</div>
+      <UiCard v-if="lastFilePath" class="mb-6">
+        <div class="p-4 flex items-center gap-2">
+          <FileText class="h-5 w-5 text-primary" />
+          <p class="text-sm"><span class="font-medium">불러온 파일 경로:</span> {{ lastFilePath }}</p>
+        </div>
+      </UiCard>
+      
+      <UiCard v-if="errorMsg" class="mb-6 border-destructive">
+        <div class="p-4 text-destructive">{{ errorMsg }}</div>
+      </UiCard>
 
       <!-- MCP 저장소 관리 UI -->
-      <section class="bg-white p-6 rounded-lg shadow-md mt-8">
-        <h2 class="text-xl font-semibold text-gray-800 mb-6 border-b pb-3">MCP 저장소 관리</h2>
+      <UiCard class="mt-8">
+        <div class="p-6">
+          <h2 class="text-2xl font-semibold mb-6 border-b pb-3">MCP 저장소 관리</h2>
         
-        <!-- 수정 모드 폼 -->
-        <form v-if="editingRepo.isEditing" @submit.prevent="saveEdit" class="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-          <h3 class="text-lg font-medium text-blue-800 mb-3">저장소 수정</h3>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">ID</label>
-              <input 
-                v-model="editingRepo.id" 
-                disabled
-                class="px-3 py-2 border border-gray-300 bg-gray-100 rounded-md w-full"
-              />
+        <!-- 수정 모달 -->
+        <div v-if="showEditModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <!-- 모달 -->
+          <div class="bg-background rounded-lg shadow-lg w-full max-w-2xl overflow-hidden">
+            <!-- 모달 헤더 -->
+            <div class="flex justify-between items-center p-4 border-b">
+              <h3 class="text-xl font-semibold">저장소 수정</h3>
+              <UiButton @click="cancelEdit" variant="ghost" size="icon">
+                <X class="h-5 w-5" />
+              </UiButton>
             </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">Command</label>
-              <input 
-                v-model="editingRepo.command" 
-                required 
-                class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-full"
-              />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">Arguments (쉼표로 구분)</label>
-              <input 
-                v-model="editingRepo.args" 
-                class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-full"
-              />
-            </div>
-            <div>
-              <label class="flex items-center gap-2 cursor-pointer mt-6">
-                <input type="checkbox" v-model="editingRepo.active" class="rounded text-blue-600 focus:ring-blue-500 h-4 w-4" />
-                <span class="text-sm text-gray-700">활성화</span>
-              </label>
-            </div>
+            
+            <!-- 모달 본문 -->
+            <form @submit.prevent="saveEdit" class="p-6">
+              <!-- 기본 정보 -->
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label class="block text-sm font-medium mb-1">ID</label>
+                  <input 
+                    v-model="editingRepo.id" 
+                    disabled
+                    class="px-3 py-2 border border-input bg-muted rounded-md w-full"
+                  />
+                </div>
+                
+                <div>
+                  <label class="block text-sm font-medium mb-1">저장소 유형</label>
+                  <select v-model="editingRepo.type" class="px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring w-full bg-background">
+                    <option :value="REPO_TYPES.STDIO">Standard IO (stdio)</option>
+                    <option :value="REPO_TYPES.SSE">Server-Sent Events (sse)</option>
+                  </select>
+                </div>
+              </div>
+              
+              <!-- STDIO 유형 필드 -->
+              <div v-if="editingRepo.type === REPO_TYPES.STDIO" class="mb-4">
+                <h4 class="text-sm font-medium mb-2 pb-1 border-b">STDIO 설정</h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label class="block text-sm font-medium mb-1">Command</label>
+                    <input 
+                      v-model="editingRepo.command" 
+                      placeholder="실행 명령어" 
+                      class="px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring w-full bg-background"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium mb-1">Arguments (쉼표로 구분)</label>
+                    <input 
+                      v-model="editingRepo.args" 
+                      placeholder="arg1, arg2, ..." 
+                      class="px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring w-full bg-background"
+                    />
+                  </div>
+                </div>
+              </div>
+              
+              <!-- SSE 유형 필드 -->
+              <div v-if="editingRepo.type === REPO_TYPES.SSE" class="mb-4">
+                <h4 class="text-sm font-medium mb-2 pb-1 border-b">SSE 설정</h4>
+                <div>
+                  <label class="block text-sm font-medium mb-1">URL</label>
+                  <input 
+                    v-model="editingRepo.url" 
+                    placeholder="https://example.com/events" 
+                    class="px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring w-full bg-background"
+                  />
+                </div>
+              </div>
+              
+              <!-- 환경 변수 -->
+              <div class="mb-4">
+                <h4 class="text-sm font-medium mb-2 pb-1 border-b">환경 변수</h4>
+                
+                <!-- 환경 변수 목록 -->
+                <div v-if="editingRepo.env.length > 0" class="mb-4 border border-input rounded-md overflow-hidden">
+                  <table class="min-w-full divide-y divide-border">
+                    <thead class="bg-muted/50">
+                      <tr>
+                        <th scope="col" class="px-4 py-2 text-left text-xs font-medium uppercase">Key</th>
+                        <th scope="col" class="px-4 py-2 text-left text-xs font-medium uppercase">Value</th>
+                        <th scope="col" class="px-4 py-2 text-center text-xs font-medium uppercase w-16">삭제</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-border bg-background">
+                      <tr v-for="(env, index) in editingRepo.env" :key="index">
+                        <td class="px-4 py-2 text-sm">{{ env.key }}</td>
+                        <td class="px-4 py-2 text-sm">{{ env.value }}</td>
+                        <td class="px-4 py-2 text-center">
+                          <button @click="removeEnvVar(index, true)" type="button" class="text-destructive hover:text-destructive/80">
+                            <Trash2 class="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                
+                <!-- 환경 변수 추가 폼 -->
+                <div class="flex gap-2 items-end">
+                  <div class="flex-1">
+                    <label class="block text-sm font-medium mb-1">Key</label>
+                    <input 
+                      v-model="newEnvVar.key" 
+                      placeholder="변수명" 
+                      class="px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring w-full bg-background"
+                    />
+                  </div>
+                  <div class="flex-1">
+                    <label class="block text-sm font-medium mb-1">Value</label>
+                    <input 
+                      v-model="newEnvVar.value" 
+                      placeholder="값" 
+                      class="px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring w-full bg-background"
+                    />
+                  </div>
+                  <UiButton @click="addEnvVar" type="button" variant="outline" size="sm" class="h-10">
+                    <Plus class="h-4 w-4 mr-1" /> 추가
+                  </UiButton>
+                </div>
+              </div>
+              
+              <div class="flex items-center gap-2 mt-2">
+                <UiSwitch v-model="editingRepo.active" />
+                <span class="text-sm">저장소 활성화</span>
+              </div>
+              
+              <!-- 모달 하단 버튼 -->
+              <div class="flex justify-end gap-2 mt-6">
+                <UiButton @click="cancelEdit" type="button" variant="outline">취소</UiButton>
+                <UiButton type="submit" variant="default">
+                  <Save class="h-4 w-4 mr-1" /> 변경사항 저장
+                </UiButton>
+              </div>
+            </form>
           </div>
-          <div class="flex justify-end gap-3">
-            <button 
-              type="button" 
-              @click="cancelEdit"
-              class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
-            >
-              취소
-            </button>
-            <button 
-              type="submit" 
-              class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-            >
-              저장
-            </button>
-          </div>
-        </form>
+        </div>
         
-        <!-- 추가 폼 -->
-        <form v-else @submit.prevent="addRepo" class="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
-          <h3 class="text-lg font-medium text-gray-800 mb-3">새 저장소 추가</h3>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">ID</label>
-              <input 
-                v-model="newRepo.id" 
-                placeholder="저장소 ID" 
-                required 
-                class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-full"
-              />
+        <!-- 추가 버튼 -->
+        <div class="mb-6 flex justify-end">
+          <UiButton @click="showAddModal = true" variant="default" class="gap-2">
+            <Plus class="h-4 w-4" />
+            새 저장소 추가
+          </UiButton>
+        </div>
+        
+        <!-- 모달 오버레이 - 추가 -->
+        <div v-if="showAddModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <!-- 모달 -->
+          <div class="bg-background rounded-lg shadow-lg w-full max-w-2xl overflow-hidden">
+            <!-- 모달 헤더 -->
+            <div class="flex justify-between items-center p-4 border-b">
+              <h3 class="text-xl font-semibold">새 저장소 추가</h3>
+              <UiButton @click="showAddModal = false" variant="ghost" size="icon">
+                <X class="h-5 w-5" />
+              </UiButton>
             </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">Command</label>
-              <input 
-                v-model="newRepo.command" 
-                placeholder="실행 명령어" 
-                required 
-                class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-full"
-              />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">Arguments (쉼표로 구분)</label>
-              <input 
-                v-model="newRepo.args" 
-                placeholder="arg1, arg2, ..." 
-                class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-full"
-              />
-            </div>
-            <div>
-              <label class="flex items-center gap-2 cursor-pointer mt-6">
-                <input type="checkbox" v-model="newRepo.active" class="rounded text-blue-600 focus:ring-blue-500 h-4 w-4" />
-                <span class="text-sm text-gray-700">활성화</span>
-              </label>
-            </div>
+            
+            <!-- 모달 본문 -->
+            <form @submit.prevent="addRepo" class="p-6">
+              <!-- 기본 정보 -->
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label class="block text-sm font-medium mb-1">ID</label>
+                  <input 
+                    v-model="newRepo.id" 
+                    placeholder="저장소 ID" 
+                    required 
+                    class="px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring w-full bg-background"
+                  />
+                </div>
+                
+                <div>
+                  <label class="block text-sm font-medium mb-1">저장소 유형</label>
+                  <select v-model="newRepo.type" class="px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring w-full bg-background">
+                    <option :value="REPO_TYPES.STDIO">Standard IO (stdio)</option>
+                    <option :value="REPO_TYPES.SSE">Server-Sent Events (sse)</option>
+                  </select>
+                </div>
+              </div>
+              
+              <!-- STDIO 유형 필드 -->
+              <div v-if="newRepo.type === REPO_TYPES.STDIO" class="mb-4">
+                <h4 class="text-sm font-medium mb-2 pb-1 border-b">STDIO 설정</h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label class="block text-sm font-medium mb-1">Command</label>
+                    <input 
+                      v-model="newRepo.command" 
+                      placeholder="실행 명령어" 
+                      class="px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring w-full bg-background"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium mb-1">Arguments (쉼표로 구분)</label>
+                    <input 
+                      v-model="newRepo.args" 
+                      placeholder="arg1, arg2, ..." 
+                      class="px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring w-full bg-background"
+                    />
+                  </div>
+                </div>
+              </div>
+              
+              <!-- SSE 유형 필드 -->
+              <div v-if="newRepo.type === REPO_TYPES.SSE" class="mb-4">
+                <h4 class="text-sm font-medium mb-2 pb-1 border-b">SSE 설정</h4>
+                <div>
+                  <label class="block text-sm font-medium mb-1">URL</label>
+                  <input 
+                    v-model="newRepo.url" 
+                    placeholder="https://example.com/events" 
+                    class="px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring w-full bg-background"
+                  />
+                </div>
+              </div>
+              
+              <!-- 환경 변수 -->
+              <div class="mb-4">
+                <h4 class="text-sm font-medium mb-2 pb-1 border-b">환경 변수</h4>
+                
+                <!-- 환경 변수 목록 -->
+                <div v-if="newRepo.env.length > 0" class="mb-4 border border-input rounded-md overflow-hidden">
+                  <table class="min-w-full divide-y divide-border">
+                    <thead class="bg-muted/50">
+                      <tr>
+                        <th scope="col" class="px-4 py-2 text-left text-xs font-medium uppercase">Key</th>
+                        <th scope="col" class="px-4 py-2 text-left text-xs font-medium uppercase">Value</th>
+                        <th scope="col" class="px-4 py-2 text-center text-xs font-medium uppercase w-16">삭제</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-border bg-background">
+                      <tr v-for="(env, index) in newRepo.env" :key="index">
+                        <td class="px-4 py-2 text-sm">{{ env.key }}</td>
+                        <td class="px-4 py-2 text-sm">{{ env.value }}</td>
+                        <td class="px-4 py-2 text-center">
+                          <button @click="removeEnvVar(index)" type="button" class="text-destructive hover:text-destructive/80">
+                            <Trash2 class="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                
+                <!-- 환경 변수 추가 폼 -->
+                <div class="flex gap-2 items-end">
+                  <div class="flex-1">
+                    <label class="block text-sm font-medium mb-1">Key</label>
+                    <input 
+                      v-model="newEnvVar.key" 
+                      placeholder="변수명" 
+                      class="px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring w-full bg-background"
+                    />
+                  </div>
+                  <div class="flex-1">
+                    <label class="block text-sm font-medium mb-1">Value</label>
+                    <input 
+                      v-model="newEnvVar.value" 
+                      placeholder="값" 
+                      class="px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring w-full bg-background"
+                    />
+                  </div>
+                  <UiButton @click="addEnvVar" type="button" variant="outline" size="sm" class="h-10">
+                    <Plus class="h-4 w-4 mr-1" /> 추가
+                  </UiButton>
+                </div>
+              </div>
+              
+              <div class="flex items-center gap-2 mt-2">
+                <UiSwitch v-model="newRepo.active" />
+                <span class="text-sm">저장소 활성화</span>
+              </div>
+              
+              <!-- 모달 하단 버튼 -->
+              <div class="flex justify-end gap-2 mt-6">
+                <UiButton @click="showAddModal = false" type="button" variant="outline">취소</UiButton>
+                <UiButton type="submit" variant="default">
+                  <Save class="h-4 w-4 mr-1" /> 저장소 추가
+                </UiButton>
+              </div>
+            </form>
           </div>
-          <div class="flex justify-end">
-            <button 
-              type="submit" 
-              class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 flex items-center gap-2"
-            >
-              <span>➕</span> 추가
-            </button>
-          </div>
-        </form>
+        </div>
         
         <!-- 저장소 목록 -->
-        <div class="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
-          <table class="min-w-full divide-y divide-gray-200">
-            <thead class="bg-gray-100">
+        <div :class="[theme === 'dark' ? 'bg-gray-700 border-gray-600' : 'bg-gray-50 border-gray-200', 'rounded-lg border overflow-hidden transition-colors duration-300']">
+          <table :class="[theme === 'dark' ? 'divide-gray-600' : 'divide-gray-200', 'min-w-full divide-y transition-colors duration-300']">
+            <thead :class="[theme === 'dark' ? 'bg-gray-800' : 'bg-gray-100', 'transition-colors duration-300']">
               <tr>
-                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Command</th>
+                <th scope="col" :class="[theme === 'dark' ? 'text-gray-300' : 'text-gray-500', 'px-6 py-3 text-left text-xs font-medium uppercase tracking-wider transition-colors duration-300']">ID</th>
+                <th scope="col" :class="[theme === 'dark' ? 'text-gray-300' : 'text-gray-500', 'px-6 py-3 text-left text-xs font-medium uppercase tracking-wider transition-colors duration-300']">Command</th>
                 <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">작업</th>
               </tr>
             </thead>
@@ -417,9 +780,24 @@ onMounted(() => {
               <tr v-for="repo in mcpList" :key="repo.id" class="hover:bg-gray-50">
                 <td class="px-6 py-4 whitespace-nowrap">
                   <div class="font-medium text-gray-900">{{ repo.id }}</div>
+                  <div class="text-xs text-gray-500">{{ repo.type }}</div>
                 </td>
                 <td class="px-6 py-4">
-                  <div class="text-sm text-gray-500">{{ repo.command }} {{ repo.args.join(' ') }}</div>
+                  <div v-if="repo.type === REPO_TYPES.STDIO" class="text-sm text-gray-500">
+                    <div>Command: <span class="font-medium">{{ repo.command }}</span></div>
+                    <div v-if="repo.args && repo.args.length">
+                      Args: <span class="font-medium">{{ repo.args.join(' ') }}</span>
+                    </div>
+                  </div>
+                  <div v-else-if="repo.type === REPO_TYPES.SSE" class="text-sm text-gray-500">
+                    <div>URL: <span class="font-medium">{{ repo.url }}</span></div>
+                  </div>
+                  <div v-if="repo.env && repo.env.length" class="mt-1 text-xs text-gray-500">
+                    <div class="font-medium">환경 변수:</div>
+                    <div v-for="(env, index) in repo.env" :key="index" class="ml-2">
+                      {{ env.key }}: {{ env.value }}
+                    </div>
+                  </div>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                   <div class="flex justify-end gap-2">
@@ -463,11 +841,15 @@ onMounted(() => {
             </tbody>
           </table>
         </div>
-      </section>
+        </div>
+      </UiCard>
     </div>
   </main>
 </template>
 
 <style>
 /* Global styles now handled by Tailwind */
+body {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
 </style>
