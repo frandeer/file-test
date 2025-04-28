@@ -71,6 +71,20 @@ fn open_file(path: String, state: State<AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn save_file(path: String, content: String) -> Result<(), String> {
+    match fs::write(&path, content) {
+        Ok(_) => {
+            println!("File saved successfully: {}", path);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Failed to save file: {}", e);
+            Err(format!("Failed to save file: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
 fn get_last_file(state: State<AppState>) -> Option<String> {
     if let Some(path) = &*state.last_file_path.lock().unwrap() {
         Some(path.clone())
@@ -116,6 +130,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             open_file,
+            save_file,
             get_last_file,
             read_last_file,
             reset_last_file,

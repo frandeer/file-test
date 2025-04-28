@@ -47,6 +47,11 @@ async function addRepo() {
     // 목록 새로고침
     mcpList.value = getMcpList();
     
+    // 불러온 파일 업데이트 (활성화된 저장소만 포함)
+    if (newRepo.active) {
+      await updateLoadedFileWithActiveMcps();
+    }
+    
     // 입력 폼 초기화
     newRepo.id = ""; 
     newRepo.command = ""; 
@@ -74,6 +79,58 @@ async function deleteRepo(id) {
   }
 }
 
+// 불러온 파일을 활성화된 MCP 저장소로 업데이트하는 함수
+async function updateLoadedFileWithActiveMcps() {
+  // 불러온 파일이 없으면 아무것도 하지 않음
+  if (!lastFilePath.value || !fileContent.value) return;
+  
+  try {
+    // 현재 파일 콘텐츠를 JSON으로 파싱
+    const fileJson = JSON.parse(fileContent.value);
+    
+    // mcpServers 객체가 없으면 생성
+    if (!fileJson.mcpServers) {
+      fileJson.mcpServers = {};
+    }
+    
+    // 현재 활성화된 MCP 저장소만 추출
+    const activeMcps = mcpList.value.filter(repo => repo.active);
+    
+    // 활성화된 저장소만 파일에 유지하고 나머지는 삭제
+    // 먼저 현재 mcpServers에서 active 아닌 것들을 삭제
+    Object.keys(fileJson.mcpServers).forEach(id => {
+      const isActive = activeMcps.some(repo => repo.id === id);
+      if (!isActive) {
+        delete fileJson.mcpServers[id];
+      }
+    });
+    
+    // 활성화된 저장소들을 파일에 추가/업데이트
+    activeMcps.forEach(repo => {
+      // active 속성은 제외하고 저장
+      const { active, ...repoWithoutActive } = {
+        id: repo.id,
+        command: repo.command,
+        args: repo.args,
+        active: repo.active
+      };
+      
+      fileJson.mcpServers[repo.id] = repoWithoutActive;
+    });
+    
+    // 업데이트된 JSON 다시 문자열로 변환 (예쁘게 포맷팅)
+    const updatedContent = JSON.stringify(fileJson, null, 2);
+    fileContent.value = updatedContent;
+    
+    // 파일 저장 (새로운 save_file 함수 사용)
+    await invoke("save_file", { path: lastFilePath.value, content: updatedContent });
+    console.log('파일 업데이트 완료:', lastFilePath.value);
+  } catch (e) {
+    console.error('파일 업데이트 오류:', e);
+    errorMsg.value = `파일 업데이트 중 오류 발생: ${e.message}`;
+  }
+}
+
 async function toggleActive(id) {
   try {
     // 먼저 UI에 즉시 반영하기 위해 로컬 상태 변경
@@ -91,13 +148,26 @@ async function toggleActive(id) {
       deactivateMcpRepo(id);
     }
     
-    // 비동기적으로 JSON 파일 저장 (UI 블록킹 방지)
-    saveMcpListToFile().catch(e => {
+    // MCP 목록 저장
+    try {
+      await saveMcpListToFile();
+    } catch (e) {
       console.error('활성화 상태 저장 실패:', e);
       // 저장 실패 시 로컬 상태 되돌리기
       mcpList.value[repoIndex].active = !newActive;
       alert(`활성화 상태 저장 실패: ${e.message}`);
-    });
+      return; // 오류 발생 시 여기서 종료
+    }
+    
+    // 불러온 파일 업데이트 (활성화된 저장소만 포함)
+    if (lastFilePath.value && fileContent.value) {
+      try {
+        await updateLoadedFileWithActiveMcps();
+      } catch (e) {
+        console.error('파일 업데이트 오류:', e);
+        errorMsg.value = `파일 업데이트 중 오류 발생: ${e.message}`;
+      }
+    }
   } catch (e) {
     console.error('활성화 상태 변경 오류:', e);
     alert(`활성화 상태 변경 중 오류 발생: ${e.message}`);
@@ -129,6 +199,10 @@ async function saveEdit() {
     await saveMcpListToFile();
     // 목록 새로고침
     mcpList.value = getMcpList();
+    
+    // 불러온 파일 업데이트 (활성화된 저장소만 포함)
+    await updateLoadedFileWithActiveMcps();
+    
     // 편집 모드 종료
     cancelEdit();
     
@@ -167,10 +241,14 @@ async function selectFile() {
       const content = await invoke("open_file", { path });
       fileContent.value = content;
       lastFilePath.value = path;
+      
       // 파일 내용에서 mcpServers 패턴 자동 추가
       await autoAddMcpReposFromFileContent(content);
       await saveMcpListToFile();
       mcpList.value = getMcpList(); // 동기화
+      
+      // 파일 업데이트 - 활성화된 저장소만 포함하도록
+      await updateLoadedFileWithActiveMcps();
     } catch (e) {
       errorMsg.value = e;
     }
