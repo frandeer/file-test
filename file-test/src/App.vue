@@ -444,8 +444,16 @@ onMounted(() => {
       <div class="flex justify-between items-center mb-8">
         <h1 class="text-3xl font-bold p-4">MCP-Server 관리</h1>
         <div class="flex items-center gap-2">
-          <UiButton @click="theme === 'light' ? setTheme('dark') : setTheme('light')" variant="ghost" size="icon" :class="{ 'bg-accent': theme === 'light' }">
-            <Sun v-if="theme === 'light'" class="h-5 w-5" />
+          <UiButton 
+            @click="() => {
+              const currentIsDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+              setTheme(currentIsDark ? 'light' : 'dark');
+            }" 
+            variant="ghost" 
+            size="icon" 
+            :class="{ 'bg-accent': theme === 'light' || (theme === 'system' && !window.matchMedia('(prefers-color-scheme: dark)').matches) }"
+          >
+            <Sun v-if="theme === 'light' || (theme === 'system' && !window.matchMedia('(prefers-color-scheme: dark)').matches)" class="h-5 w-5" />
             <Moon v-else class="h-5 w-5" />
           </UiButton>
         </div>
