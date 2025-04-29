@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    file_test_lib::run()
+    mcp_config_manager_lib::run()
 }

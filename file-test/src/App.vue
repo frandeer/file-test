@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, reactive, watch } from "vue";
+import { ref, onMounted, reactive, watch, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { openFileDialog } from "./fileDialog";
 import {
@@ -28,15 +28,30 @@ const lastFilePath = ref("");
 const errorMsg = ref("");
 const theme = ref(localStorage.getItem('theme') || 'system');
 const showFileContent = ref(false); // 파일 내용 표시 토글
+// 다크 모드 확인을 위한 상태
+const isDarkMode = ref(false);
 
 // Handle theme changes
 function setTheme(newTheme) {
   theme.value = newTheme;
   localStorage.setItem('theme', newTheme);
   
+  // isDarkMode 상태 업데이트
+  updateDarkMode();
+  
   // Apply theme to document
-  const isDark = newTheme === 'dark' || (newTheme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  document.documentElement.classList.toggle('dark', isDark);
+  document.documentElement.classList.toggle('dark', isDarkMode.value);
+}
+
+// 다크 모드 상태 업데이트 함수
+function updateDarkMode() {
+  if (theme.value === 'dark') {
+    isDarkMode.value = true;
+  } else if (theme.value === 'light') {
+    isDarkMode.value = false;
+  } else if (theme.value === 'system' && typeof window !== 'undefined' && window.matchMedia) {
+    isDarkMode.value = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
 }
 
 // Watch for system theme changes when in system mode
@@ -427,15 +442,22 @@ async function resetFile() {
 onMounted(() => {
   loadLastFile();
   
-  // Initialize theme based on saved preference or system preference
-  setTheme(theme.value);
-  
-  // Add listener for system theme changes
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    if (theme.value === 'system') {
-      setTheme('system');
-    }
-  });
+  // window 객체 접근이 안전한지 확인
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    // 초기 다크 모드 상태 설정
+    updateDarkMode();
+    
+    // Initialize theme based on saved preference
+    setTheme(theme.value);
+    
+    // Add listener for system theme changes
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (theme.value === 'system') {
+        updateDarkMode();
+        document.documentElement.classList.toggle('dark', isDarkMode.value);
+      }
+    });
+  }
 });
 
 // 포맷된 JSON 반환 함수
@@ -458,14 +480,13 @@ function getPrettyJson() {
         <div class="flex items-center gap-2">
           <UiButton 
             @click="() => {
-              const currentIsDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-              setTheme(currentIsDark ? 'light' : 'dark');
+              setTheme(isDarkMode ? 'light' : 'dark');
             }" 
             variant="ghost" 
             size="icon" 
-            :class="{ 'bg-accent': theme === 'light' || (theme === 'system' && !window.matchMedia('(prefers-color-scheme: dark)').matches) }"
+            :class="{ 'bg-accent': !isDarkMode }"
           >
-            <Sun v-if="theme === 'light' || (theme === 'system' && !window.matchMedia('(prefers-color-scheme: dark)').matches)" class="h-5 w-5" />
+            <Sun v-if="!isDarkMode" class="h-5 w-5" />
             <Moon v-else class="h-5 w-5" />
           </UiButton>
         </div>
