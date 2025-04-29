@@ -27,6 +27,7 @@ const fileContent = ref("");
 const lastFilePath = ref("");
 const errorMsg = ref("");
 const theme = ref(localStorage.getItem('theme') || 'system');
+const showFileContent = ref(false); // 파일 내용 표시 토글
 
 // Handle theme changes
 function setTheme(newTheme) {
@@ -436,6 +437,17 @@ onMounted(() => {
     }
   });
 });
+
+// 포맷된 JSON 반환 함수
+function getPrettyJson() {
+  try {
+    if (!fileContent.value) return "";
+    const jsonObj = JSON.parse(fileContent.value);
+    return JSON.stringify(jsonObj, null, 2);
+  } catch (e) {
+    return fileContent.value;
+  }
+}
 </script>
 
 <template>
@@ -471,9 +483,25 @@ onMounted(() => {
       </div>
       
       <UiCard v-if="lastFilePath" class="mb-6">
-        <div class="p-4 flex items-center gap-2">
-          <FileText class="h-5 w-5 text-primary" />
-          <p class="text-sm"><span class="font-medium">불러온 파일 경로:</span> {{ lastFilePath }}</p>
+        <div 
+          class="p-4 flex items-center justify-between cursor-pointer hover:bg-muted/50 transition-colors"
+          @click="showFileContent = !showFileContent"
+        >
+          <div class="flex items-center gap-2">
+            <FileText class="h-5 w-5 text-primary" />
+            <p class="text-sm"><span class="font-medium">불러온 파일 경로:</span> {{ lastFilePath }}</p>
+          </div>
+          <div class="text-muted-foreground transition-transform duration-200" :class="{ 'rotate-180': showFileContent }">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+        </div>
+        
+        <div v-if="showFileContent" class="px-4 pb-4 pt-0">
+          <div class="mt-2 p-4 bg-muted rounded-md overflow-auto max-h-96">
+            <pre class="text-xs leading-relaxed whitespace-pre-wrap break-all"><code>{{ getPrettyJson() }}</code></pre>
+          </div>
         </div>
       </UiCard>
       
@@ -523,7 +551,7 @@ onMounted(() => {
               <!-- STDIO 유형 필드 -->
               <div v-if="editingRepo.type === REPO_TYPES.STDIO" class="mb-4">
                 <h4 class="text-sm font-medium mb-2 pb-1 border-b">STDIO 설정</h4>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="flex flex-col gap-2">
                   <div>
                     <label class="block text-sm font-medium mb-1">Command</label>
                     <input 
@@ -670,7 +698,7 @@ onMounted(() => {
               <!-- STDIO 유형 필드 -->
               <div v-if="newRepo.type === REPO_TYPES.STDIO" class="mb-4">
                 <h4 class="text-sm font-medium mb-2 pb-1 border-b">STDIO 설정</h4>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="flex flex-col gap-2">
                   <div>
                     <label class="block text-sm font-medium mb-1">Command</label>
                     <input 
