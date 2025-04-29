@@ -219,17 +219,14 @@ async function updateLoadedFileWithActiveMcps() {
     
     // 활성화된 저장소들을 파일에 추가/업데이트
     activeMcps.forEach(repo => {
-      // 타입에 따라 필요한 속성을 포함한 객체 생성
-      let repoData = { id: repo.id };
-      
-      // 타입 정보 추가
-      repoData.type = repo.type || REPO_TYPES.STDIO;
+      // 필요한 속성을 포함한 객체 생성
+      let repoData = {};
       
       // 타입에 따라 필요한 필드 추가
-      if (repoData.type === REPO_TYPES.STDIO) {
+      if (repo.type === REPO_TYPES.STDIO) {
         repoData.command = repo.command;
         repoData.args = repo.args;
-      } else if (repoData.type === REPO_TYPES.SSE) {
+      } else if (repo.type === REPO_TYPES.SSE) {
         repoData.url = repo.url;
       }
       
