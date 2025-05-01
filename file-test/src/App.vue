@@ -23,6 +23,9 @@ import UiTable from '@/components/ui/table.vue';
 // Lucide 아이콘 가져오기
 import { X, Plus, Save, Trash2, Edit, Power, Sun, Moon, FileText, Check } from 'lucide-vue-next';
 
+// 디버깅용 로그 추가
+console.log('환경 변수 형식 변경됨: 배열에서 객체로');
+
 const fileContent = ref("");
 const lastFilePath = ref("");
 const errorMsg = ref("");
@@ -82,7 +85,7 @@ const newRepo = reactive({
   command: "", 
   args: "", 
   url: "",
-  env: [],
+  env: {},
   active: true 
 });
 
@@ -96,7 +99,7 @@ const editingRepo = reactive({
   command: "", 
   args: "", 
   url: "",
-  env: [],
+  env: {},
   active: true, 
   isEditing: false 
 });
@@ -110,10 +113,10 @@ async function refreshMcpList() {
 function addEnvVar() {
   if (!newEnvVar.key) return;
   
-  if (newRepo.isEditing) {
-    editingRepo.env.push({...newEnvVar});
+  if (editingRepo.isEditing) {
+    editingRepo.env[newEnvVar.key] = newEnvVar.value;
   } else {
-    newRepo.env.push({...newEnvVar});
+    newRepo.env[newEnvVar.key] = newEnvVar.value;
   }
   
   // 항목 초기화
@@ -122,11 +125,11 @@ function addEnvVar() {
 }
 
 // 환경변수 삭제 함수
-function removeEnvVar(index, isEditing = false) {
+function removeEnvVar(key, isEditing = false) {
   if (isEditing) {
-    editingRepo.env.splice(index, 1);
+    delete editingRepo.env[key];
   } else {
-    newRepo.env.splice(index, 1);
+    delete newRepo.env[key];
   }
 }
 
@@ -151,7 +154,7 @@ async function addRepo() {
       id: newRepo.id.trim(),
       type: newRepo.type,
       active: newRepo.active,
-      env: [...newRepo.env]
+      env: { ...newRepo.env }
     };
     
     // 타입에 따라 필요한 필드 추가
@@ -180,7 +183,7 @@ async function addRepo() {
     newRepo.command = ""; 
     newRepo.args = ""; 
     newRepo.url = "";
-    newRepo.env = [];
+    newRepo.env = {};
     newRepo.active = true;
     
     // 모달 닫기
@@ -247,7 +250,7 @@ async function updateLoadedFileWithActiveMcps() {
       }
       
       // 환경 변수 추가 (있는 경우)
-      if (repo.env && repo.env.length > 0) {
+      if (repo.env && Object.keys(repo.env).length > 0) {
         repoData.env = repo.env;
       }
       
@@ -316,7 +319,7 @@ function startEditing(repo) {
   editingRepo.command = repo.command || "";
   editingRepo.args = repo.args ? repo.args.join(',') : "";
   editingRepo.url = repo.url || "";
-  editingRepo.env = repo.env ? [...repo.env] : [];
+  editingRepo.env = repo.env ? { ...repo.env } : {};
   editingRepo.active = repo.active;
   editingRepo.isEditing = true;
   
@@ -339,7 +342,7 @@ async function saveEdit() {
     const repoData = {
       type: editingRepo.type,
       active: editingRepo.active,
-      env: [...editingRepo.env]
+      env: { ...editingRepo.env }
     };
     
     // 타입에 따라 필요한 필드 추가
@@ -376,7 +379,7 @@ function cancelEdit() {
   editingRepo.command = "";
   editingRepo.args = "";
   editingRepo.url = "";
-  editingRepo.env = [];
+  editingRepo.env = {};
   editingRepo.active = true;
   editingRepo.isEditing = false;
   
@@ -610,7 +613,7 @@ function getPrettyJson() {
                 <h4 class="text-sm font-medium mb-2 pb-1 border-b">환경 변수</h4>
                 
                 <!-- 환경 변수 목록 -->
-                <div v-if="editingRepo.env.length > 0" class="mb-4 border border-input rounded-md overflow-hidden">
+                <div v-if="Object.keys(editingRepo.env).length > 0" class="mb-4 border border-input rounded-md overflow-hidden">
                   <table class="min-w-full divide-y divide-border">
                     <thead class="bg-muted/50">
                       <tr>
@@ -620,11 +623,11 @@ function getPrettyJson() {
                       </tr>
                     </thead>
                     <tbody class="divide-y divide-border bg-background">
-                      <tr v-for="(env, index) in editingRepo.env" :key="index">
-                        <td class="px-4 py-2 text-sm">{{ env.key }}</td>
-                        <td class="px-4 py-2 text-sm">{{ env.value }}</td>
+                      <tr v-for="(value, key) in editingRepo.env" :key="key">
+                        <td class="px-4 py-2 text-sm">{{ key }}</td>
+                        <td class="px-4 py-2 text-sm">{{ value }}</td>
                         <td class="px-4 py-2 text-center">
-                          <button @click="removeEnvVar(index, true)" type="button" class="text-destructive hover:text-destructive/80">
+                          <button @click="removeEnvVar(key, true)" type="button" class="text-destructive hover:text-destructive/80">
                             <Trash2 class="h-4 w-4" />
                           </button>
                         </td>
@@ -757,7 +760,7 @@ function getPrettyJson() {
                 <h4 class="text-sm font-medium mb-2 pb-1 border-b">환경 변수</h4>
                 
                 <!-- 환경 변수 목록 -->
-                <div v-if="newRepo.env.length > 0" class="mb-4 border border-input rounded-md overflow-hidden">
+                <div v-if="Object.keys(newRepo.env).length > 0" class="mb-4 border border-input rounded-md overflow-hidden">
                   <table class="min-w-full divide-y divide-border">
                     <thead class="bg-muted/50">
                       <tr>
@@ -767,11 +770,11 @@ function getPrettyJson() {
                       </tr>
                     </thead>
                     <tbody class="divide-y divide-border bg-background">
-                      <tr v-for="(env, index) in newRepo.env" :key="index">
-                        <td class="px-4 py-2 text-sm">{{ env.key }}</td>
-                        <td class="px-4 py-2 text-sm">{{ env.value }}</td>
+                      <tr v-for="(value, key) in newRepo.env" :key="key">
+                        <td class="px-4 py-2 text-sm">{{ key }}</td>
+                        <td class="px-4 py-2 text-sm">{{ value }}</td>
                         <td class="px-4 py-2 text-center">
-                          <button @click="removeEnvVar(index)" type="button" class="text-destructive hover:text-destructive/80">
+                          <button @click="removeEnvVar(key)" type="button" class="text-destructive hover:text-destructive/80">
                             <Trash2 class="h-4 w-4" />
                           </button>
                         </td>
@@ -846,10 +849,10 @@ function getPrettyJson() {
                   <div v-else-if="repo.type === REPO_TYPES.SSE" class="text-sm text-gray-500">
                     <div>URL: <span class="font-medium">{{ repo.url }}</span></div>
                   </div>
-                  <div v-if="repo.env && repo.env.length" class="mt-1 text-xs text-gray-500">
+                  <div v-if="Object.keys(repo.env).length > 0" class="mt-1 text-xs text-gray-500">
                     <div class="font-medium">환경 변수:</div>
-                    <div v-for="(env, index) in repo.env" :key="index" class="ml-2">
-                      {{ env.key }}: {{ env.value }}
+                    <div v-for="(value, key) in repo.env" :key="key" class="ml-2">
+                      {{ key }}: {{ value }}
                     </div>
                   </div>
                 </td>
